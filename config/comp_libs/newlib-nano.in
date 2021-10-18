@@ -21,7 +21,7 @@ config NEWLIB_NANO_GCC_LIBSTDCXX
 config NEWLIB_NANO_GCC_LIBSTDCXX_TARGET_CXXFLAGS
     string
     prompt "Target CXXFLAGS for libstdc++ newlib-nano variant"
-    default "-fno-exceptions"
+    default "-fexceptions"
     help
       Used to add extra CXXFLAGS when compiling the target libstdc++
       newlib-nano library (e.g. -fno-exceptions).
