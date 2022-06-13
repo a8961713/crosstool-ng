@@ -12,14 +12,32 @@ do_debug_gdb_extract()
 
 do_debug_gdb_build_cross()
 {
+    local progprefix progsuffix usepython
     local gcc_version p _p
     local -a cross_extra_config
 
-    CT_DoStep INFO "Installing cross-gdb"
-    CT_mkdir_pushd "${CT_BUILD_DIR}/build-gdb-cross"
+    for arg in "$@"; do
+        case "$arg" in
+            *)
+                eval "${arg// /\\ }"
+                ;;
+        esac
+    done
+
+    CT_DoStep INFO "Installing cross-${progprefix}gdb${progsuffix}"
+    CT_mkdir_pushd "${CT_BUILD_DIR}/build-${progprefix}gdb${progsuffix}-cross"
 
     cross_extra_config=( "${CT_GDB_CROSS_EXTRA_CONFIG_ARRAY[@]}" )
-    if [ "${CT_GDB_CROSS_PYTHON}" = "y" ]; then
+
+    if [ -n "${progprefix}" ]; then
+        cross_extra_config+=("--program-prefix=${progprefix}")
+    fi
+
+    if [ -n "${progsuffix}" ]; then
+        cross_extra_config+=("--program-suffix=${progsuffix}")
+    fi
+
+    if [ "${usepython}" = "y" ]; then
         if [ -z "${CT_GDB_CROSS_PYTHON_BINARY}" ]; then
             if [ "${CT_CANADIAN}" = "y" -o "${CT_CROSS_NATIVE}" = "y" ]; then
                 CT_Abort "For canadian build, Python wrapper runnable on the build machine must be provided. Set CT_GDB_CROSS_PYTHON_BINARY."
@@ -49,6 +67,25 @@ do_debug_gdb_build_cross()
         cross_extra_config+=("--enable-build-warnings=,-Wno-format-nonliteral,-Wno-format-security")
     fi
 
+    # Target libexpat resides in sysroot and does not have
+    # any dependencies, so just passing '-lexpat' to gcc is enough.
+    #
+    # By default gdb configure looks for expat in '$prefix/lib'
+    # directory. In our case '$prefix/lib' resolves to '/usr/lib'
+    # where libexpat for build platform lives, which is
+    # unacceptable for cross-compiling.
+    #
+    # To prevent this '--without-libexpat-prefix' flag must be passed.
+    # Thus configure falls back to '-lexpat', which is exactly what we want.
+    #
+    # NOTE: DO NOT USE --with-libexpat-prefix (until GDB configure is smarter)!!!
+    # It conflicts with a static build: GDB's configure script will find the shared
+    # version of expat and will attempt to link that, despite the -static flag.
+    # The link will fail, and configure will abort with "expat missing or unusable"
+    # message.
+    extra_config+=("--with-expat")
+    extra_config+=("--without-libexpat-prefix")
+
     do_gdb_backend \
         buildtype=cross \
         host="${CT_HOST}" \
@@ -66,23 +103,21 @@ do_debug_gdb_build_cross()
         CT_DoExecLog ALL make install-{pdf,html}-gdb
     fi
 
-    if [ "${CT_GDB_INSTALL_GDBINIT}" = "y" ]; then
-        CT_DoLog EXTRA "Installing '.gdbinit' template"
-        # See in scripts/build/internals.sh for why we do this
-        # TBD GCC 3.x and older not supported
-        if [ -f "${CT_SRC_DIR}/gcc/gcc/BASE-VER" ]; then
-            gcc_version=$(cat "${CT_SRC_DIR}/gcc/gcc/BASE-VER")
-        else
-            gcc_version=$(sed -r -e '/version_string/!d; s/^.+= "([^"]+)".*$/\1/;'   \
-                               "${CT_SRC_DIR}/gcc/gcc/version.c"   \
-                         )
-        fi
-        sed -r                                                  \
-               -e "s:@@PREFIX@@:${CT_PREFIX_DIR}:;"             \
-               -e "s:@@VERSION@@:${gcc_version}:;"              \
-               "${CT_LIB_DIR}/scripts/build/debug/gdbinit.in"   \
-               >"${CT_PREFIX_DIR}/share/gdb/gdbinit"
-    fi # Install gdbinit sample
+    CT_DoLog EXTRA "Installing '.gdbinit' template"
+    # See in scripts/build/internals.sh for why we do this
+    # TBD GCC 3.x and older not supported
+    if [ -f "${CT_SRC_DIR}/gcc/gcc/BASE-VER" ]; then
+        gcc_version=$(cat "${CT_SRC_DIR}/gcc/gcc/BASE-VER")
+    else
+        gcc_version=$(sed -r -e '/version_string/!d; s/^.+= "([^"]+)".*$/\1/;'   \
+                            "${CT_SRC_DIR}/gcc/gcc/version.c"   \
+                        )
+    fi
+    sed -r                                                  \
+            -e "s:@@PREFIX@@:${CT_PREFIX_DIR}:;"             \
+            -e "s:@@VERSION@@:${gcc_version}:;"              \
+            "${CT_LIB_DIR}/scripts/build/debug/gdbinit.in"   \
+            >"${CT_PREFIX_DIR}/share/gdb/gdbinit"
 
     CT_Popd
     CT_EndStep
@@ -91,19 +126,21 @@ do_debug_gdb_build_cross()
 do_debug_gdb_build()
 {
     if [ "${CT_GDB_CROSS}" = "y" ]; then
-	do_debug_gdb_build_cross
+        if [ "${CT_GDB_CROSS_PYTHON_VARIANT}" = "y" ]; then
+            do_debug_gdb_build_cross \
+                usepython=n
+
+            do_debug_gdb_build_cross \
+                usepython=y \
+                progprefix="${CT_TARGET}-" \
+                progsuffix="-py"
+        else
+            do_debug_gdb_build_cross \
+                usepython="${CT_GDB_CROSS_PYTHON}"
+        fi
     fi
 
-    if [ "${CT_GDB_CROSS_BUILD_NO_PYTHON}" = "y" ]; then
-        CT_DoStep INFO "Build gdb (w/o python) ${CT_TARGET}"
-        CT_GDB_CROSS_PYTHON="n"
-        CT_GDB_CROSS_EXTRA_CONFIG_ARRAY+=("--program-prefix=${CT_TARGET}-")
-        CT_GDB_CROSS_EXTRA_CONFIG_ARRAY+=("--program-suffix=-no-py")
-        do_debug_gdb_build_cross
-        CT_GDB_CROSS_PYTHON="y"
-    fi
-
-    if [ "${CT_GDB_NATIVE}" = "y" -o "${CT_GDB_GDBSERVER}" = "y" ]; then
+    if [ "${CT_GDB_NATIVE}" = "y" ]; then
         local -a native_extra_config
         local subdir
 
@@ -112,22 +149,17 @@ do_debug_gdb_build()
 
         native_extra_config+=("--program-prefix=")
 
+        # gdbserver gets enabled by default with gdb
+        # since gdbserver was promoted to top-level
+        if [ "${CT_GDB_GDBSERVER_TOPLEVEL}" = "y" ]; then
+            native_extra_config+=("--disable-gdbserver")
+        fi
+
         # GDB on Mingw depends on PDcurses, not ncurses
         if [ "${CT_MINGW32}" != "y" ]; then
             native_extra_config+=("--with-curses")
         fi
 
-        # Build a native gdbserver if needed. If building only
-        # gdbserver, configure in the subdirectory.
-        # Newer versions enable it automatically for a native target by default.
-        if [ "${CT_GDB_GDBSERVER}" != "y" ]; then
-            native_extra_config+=("--disable-gdbserver")
-        else
-            native_extra_config+=("--enable-gdbserver")
-            if [ "${CT_GDB_NATIVE}" != "y" ]; then
-                subdir=gdb/gdbserver/
-            fi
-        fi
         if [ "${CT_GDB_NATIVE_BUILD_IPA_LIB}" = "y" ]; then
             native_extra_config+=("--enable-inprocess-agent")
         else
@@ -136,10 +168,82 @@ do_debug_gdb_build()
 
         export ac_cv_func_strncmp_works=yes
 
-        # TBD do we need all these? Eg why do we disable TUI if we build curses for target?
+        # TBD do we need all these?
         native_extra_config+=(
             --without-uiout
-            --disable-tui
+            --disable-gdbtk
+            --without-x
+            --disable-sim
+            --without-included-gettext
+            --without-develop
+            --sysconfdir=/etc
+            --localstatedir=/var
+        )
+
+        # Target libexpat resides in sysroot and does not have
+        # any dependencies, so just passing '-lexpat' to gcc is enough.
+        #
+        # By default gdb configure looks for expat in '$prefix/lib'
+        # directory. In our case '$prefix/lib' resolves to '/usr/lib'
+        # where libexpat for build platform lives, which is
+        # unacceptable for cross-compiling.
+        #
+        # To prevent this '--without-libexpat-prefix' flag must be passed.
+        # Thus configure falls back to '-lexpat', which is exactly what we want.
+        #
+        # NOTE: DO NOT USE --with-libexpat-prefix (until GDB configure is smarter)!!!
+        # It conflicts with a static build: GDB's configure script will find the shared
+        # version of expat and will attempt to link that, despite the -static flag.
+        # The link will fail, and configure will abort with "expat missing or unusable"
+        # message.
+        extra_config+=("--with-expat")
+        extra_config+=("--without-libexpat-prefix")
+
+        do_gdb_backend \
+            buildtype=native \
+            subdir=${subdir} \
+            host="${CT_TARGET}" \
+            cflags="${CT_ALL_TARGET_CFLAGS}" \
+            ldflags="${CT_ALL_TARGET_LDFLAGS}" \
+            static="${CT_GDB_NATIVE_STATIC}" \
+            static_libstdc="${CT_GDB_NATIVE_STATIC_LIBSTDC}" \
+            prefix=/usr \
+            destdir="${CT_DEBUGROOT_DIR}" \
+            "${native_extra_config[@]}"
+
+        unset ac_cv_func_strncmp_works
+
+        CT_Popd
+        CT_EndStep # native gdb build
+    fi
+
+    if [ "${CT_GDB_GDBSERVER}" = "y" ]; then
+        local -a native_extra_config
+        local subdir
+
+        if [ "${CT_GDB_GDBSERVER_TOPLEVEL}" != "y" ]; then
+            subdir=gdb/gdbserver/
+        else
+            native_extra_config+=("--disable-gdb")
+        fi
+
+        CT_DoStep INFO "Installing gdb server"
+        CT_mkdir_pushd "${CT_BUILD_DIR}/build-gdb-server"
+
+        native_extra_config+=("--program-prefix=")
+        native_extra_config+=("--enable-gdbserver")
+
+        if [ "${CT_GDB_NATIVE_BUILD_IPA_LIB}" = "y" ]; then
+            native_extra_config+=("--enable-inprocess-agent")
+        else
+            native_extra_config+=("--disable-inprocess-agent")
+        fi
+
+        export ac_cv_func_strncmp_works=yes
+
+        # TBD do we need all these?
+        native_extra_config+=(
+            --without-uiout
             --disable-gdbtk
             --without-x
             --disable-sim
@@ -164,7 +268,7 @@ do_debug_gdb_build()
         unset ac_cv_func_strncmp_works
 
         CT_Popd
-        CT_EndStep # native gdb build
+        CT_EndStep # gdb server build
     fi
 }
 
@@ -200,10 +304,8 @@ do_gdb_backend()
         CT_DoExecLog ALL cp gdb/proc_service.h gdb/gdbserver/proc_service.h
     fi
 
-    if [ "${CT_GDB_HAS_PKGVERSION_BUGURL}" = "y" ]; then
-        [ -n "${CT_PKGVERSION}" ] && extra_config+=("--with-pkgversion=${CT_PKGVERSION}")
-        [ -n "${CT_TOOLCHAIN_BUGURL}" ] && extra_config+=("--with-bugurl=${CT_TOOLCHAIN_BUGURL}")
-    fi
+    [ -n "${CT_PKGVERSION}" ] && extra_config+=("--with-pkgversion=${CT_PKGVERSION}")
+    [ -n "${CT_TOOLCHAIN_BUGURL}" ] && extra_config+=("--with-bugurl=${CT_TOOLCHAIN_BUGURL}")
 
     # Disable binutils options when building from the binutils-gdb repo.
     extra_config+=("--disable-binutils")
@@ -223,28 +325,11 @@ do_gdb_backend()
         extra_config+=("--disable-nls")
     fi
 
-    # Target libexpat resides in sysroot and does not have
-    # any dependencies, so just passing '-lexpat' to gcc is enough.
-    #
-    # By default gdb configure looks for expat in '$prefix/lib'
-    # directory. In our case '$prefix/lib' resolves to '/usr/lib'
-    # where libexpat for build platform lives, which is
-    # unacceptable for cross-compiling.
-    #
-    # To prevent this '--without-libexpat-prefix' flag must be passed.
-    # Thus configure falls back to '-lexpat', which is exactly what we want.
-    #
-    # NOTE: DO NOT USE --with-libexpat-prefix (until GDB configure is smarter)!!!
-    # It conflicts with a static build: GDB's configure script will find the shared
-    # version of expat and will attempt to link that, despite the -static flag.
-    # The link will fail, and configure will abort with "expat missing or unusable"
-    # message.
-    extra_config+=("--with-expat")
-    extra_config+=("--without-libexpat-prefix")
-
     if [ "${static}" = "y" ]; then
         cflags+=" -static"
         ldflags+=" -static"
+        # There is no static libsource-highlight
+        extra_config+=("--disable-source-highlight")
     fi
     if [ "${static_libstdcxx}" = "y" ]; then
         case "$CT_HOST" in
@@ -259,16 +344,9 @@ do_gdb_backend()
                 ;;
         esac
 
-        # Disable source-highlight when building with static libstdc++ because
-        # the source-highlight library is enabled by default, and GDB configure
-        # script complains when these two options are simultaneously enabled:
-        #
-        #   configure: error: source highlight is incompatible with
-        #   -static-libstdc++
-        #
-        # This is more of a temporary workaround than a permanent fix -- this
-        # should be reworked to resolve the conflicts in the Kconfig when the
-        # source-highlight support is directly added to crosstool-ng.
+        # libsource-highlight is a dynamic library that uses exception
+        # exceptions are handled by libstdc++
+        # this combination is very buggy, so configure don't use it and abort
         extra_config+=("--disable-source-highlight")
     fi
 

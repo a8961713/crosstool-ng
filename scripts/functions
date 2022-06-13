@@ -727,7 +727,7 @@ CT_DoGetFile()
     rm -f "${tmp}"
 
     # Replace a special value of '-1' with empty string
-    if [ ${CT_CONNECT_TIMEOUT} != -1 ]; then
+    if [ "${CT_CONNECT_TIMEOUT}" != -1 ]; then
         T="${CT_CONNECT_TIMEOUT}"
     fi
 
@@ -1132,7 +1132,7 @@ CT_DoBuildTargetTuple()
     # values.
     case "${CT_LIBC}" in
         glibc)       CT_TARGET_SYS=gnu;;
-        uClibc)      CT_TARGET_SYS=uclibc;;
+        uClibc-ng)   CT_TARGET_SYS=uclibc;;
         musl)        CT_TARGET_SYS=musl;;
         bionic)      CT_TARGET_SYS=android;;
         none|newlib|picolibc) CT_TARGET_SYS=elf;;
@@ -1800,7 +1800,6 @@ CT_Mirrors()
         echo "https://releases.linaro.org/archive/${yymm}/components/toolchain/${project}-linaro"
         ;;
     kernel.org)
-        # TBD move to linux.sh and dtc.sh?
         case "${project}" in
         linux)
             local version="${CT_LINUX_VERSION}"
@@ -1809,14 +1808,14 @@ CT_Mirrors()
                 # Ignore, this happens before .config is fully evaluated
                 ;;
             [345].*)
-                echo "http://www.kernel.org/pub/linux/kernel/v${version%%.*}.x"
+                echo "https://cdn.kernel.org/pub/linux/kernel/v${version%%.*}.x"
                 ;;
             2.6.*)
-                echo "http://www.kernel.org/pub/linux/kernel/v2.6"
+                echo "https://cdn.kernel.org/pub/linux/kernel/v2.6"
                 case "${version}" in
                 2.6.*.*)
-                    echo "http://www.kernel.org/pub/linux/kernel/v2.6/longterm"
-                    echo "http://www.kernel.org/pub/linux/kernel/v2.6/longterm/v${version%.*}"
+                    echo "https://cdn.kernel.org/pub/linux/kernel/v2.6/longterm"
+                    echo "https://cdn.kernel.org/pub/linux/kernel/v2.6/longterm/v${version%.*}"
                     ;;
                 esac
                 ;;
@@ -1826,7 +1825,7 @@ CT_Mirrors()
             esac
             ;;
         dtc)
-            echo "https://mirrors.edge.kernel.org/pub/software/utils/dtc"
+            echo "https://cdn.kernel.org/pub/software/utils/dtc"
             ;;
         *)
             echo "-unknown-"
@@ -2509,7 +2508,7 @@ CT_InstallCopyingInformation()
     CT_DoLog EXTRA "Collect license information from: ${CT_SRC_DIR}"
     CT_DoLog EXTRA "Put the license information to: ${CT_PREFIX_DIR}/share/licenses"
 
-    for licfile in $( find "${CT_SRC_DIR}" -follow -type f -a \( -name "COPYING*" -o -name "LICENSE*" \) ); do
+    for licfile in $( find "${CT_SRC_DIR}" -follow -type f -a \( -name "COPYING*" -o -name "LICENSE*" -o -name "COPYRIGHT*" \) ); do
         dstdir="${licfile%/*}"
         dstdir="${CT_PREFIX_DIR}/share/licenses${dstdir#${CT_SRC_DIR}}"
         mkdir -p "${dstdir}"
