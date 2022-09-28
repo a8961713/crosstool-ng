@@ -85,13 +85,26 @@ config GDB_CROSS_PYTHON_BINARY
       help message in gdb's configure script for the --with-python option
       for further guidance.
 
-config GDB_CROSS_BUILD_NO_PYTHON
+config GDB_CROSS_LZMA
     bool
-    prompt "Build GDB w/o python"
-    depends on GDB_HAS_PYTHON
+    prompt "Build GDB with LZMA"
     help
-      Build a version of GDB that doesn't support python (in addition to a
-      version that does).  This version will be suffix with "no-py".
+      Build GDB with liblzma, a compression library supporting the LZMA
+      algorithm. LZMA is used by the GDB's "mini debuginfo" feature, which is
+      only useful on the platforms using the ELF object file format.
+
+      Note that crosstool-ng does not build liblzma for the host and you are
+      responsible for providing this library on the build system.
+
+config GDB_CROSS_GUILE
+    bool
+    prompt "Build GDB with GNU Guile scripting support"
+    help
+      Build GDB with libguile, a library implementing the GNU Guile scripting
+      feature.
+
+      Note that crosstool-ng does not build libguile for the host and you are
+      responsible for providing this library on the build system.
 
 config GDB_CROSS_EXTRA_CONFIG_ARRAY
     string
