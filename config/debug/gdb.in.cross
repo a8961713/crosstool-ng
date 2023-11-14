@@ -62,6 +62,7 @@ config GDB_CROSS_PYTHON_VARIANT
     bool
     prompt "Build additional Python-capable gdb variant (gdb-py)"
     depends on GDB_CROSS_PYTHON
+    default y if GDB_CROSS_PYTHON
     help
       Build an additional gdb variant (gdb-py) that supports Python scripting.
 
